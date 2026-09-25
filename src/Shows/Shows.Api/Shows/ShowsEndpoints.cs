@@ -1,0 +1,51 @@
+namespace Shows.Api.Shows;
+
+public static class ShowsEndpoints
+{
+    public static IEndpointRouteBuilder MapShows(this IEndpointRouteBuilder routes)
+    {
+        var group = routes.MapGroup("/shows"); // "prefix is /shows"
+
+        // GET /shows
+        group.MapGet("", (IProvideShowsData data, CancellationToken token) =>
+            data.GetAllShowsAsync(token));
+
+        // GET /shows/{id}
+        group.MapGet("/{id:guid}", async (Guid id, IProvideShowsData data) =>
+        {
+            var show = await data.GetShowByIdAsync(id);
+            return show is null ? Results.NotFound() : Results.Ok(show);
+        });
+
+        // POST /shows
+        group.MapPost("", async (
+            ShowCreateRequest request,
+            IProvideShowsData data,
+            INotifyInventoryControl notifier,
+            ILoggerFactory loggerFactory) =>
+        {
+            var created = await data.AddShowAsync(request);
+
+            try
+            {
+                // this is a technical requirement - because the "business does not care".
+                // string calcultor part 2 - this is logging.
+                // - and if that fails, calling a web service.
+               await notifier.NotifyNewShowAsync(new ShowSummary(created.Id, created.Title));
+            }
+            catch (Exception ex)
+            {
+                // Notifying the watch desk is best-effort: a show is still added if the desk
+                // is unreachable. See venues/http.md.
+                loggerFactory.CreateLogger("Shows")
+                    .LogWarning(ex, "Could not notify the watch desk that {Title} was added.", created.Title);
+            }
+
+            return Results.Created($"/shows/{created.Id}", created);
+        });
+
+        group.WithDisplayName("The Shows Api");
+
+        return routes;
+    }
+}
